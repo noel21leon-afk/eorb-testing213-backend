@@ -1,78 +1,30 @@
-const CACHE_NAME = "eorb-marine-v34";
-const APP_SHELL = [
-  "./",
-  "./index.html",
-  "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./icons/icon-512-maskable.png",
-  "./icons/bg-ship.jpg",
-  "./icons/intro-bg.jpg"
-];
+const CACHE = 'bakecost-v8';
+const ASSETS = ['./', './index.html', './manifest.webmanifest',
+  './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
+  './icons/apple-touch-icon.png', './icons/favicon-32.png'];
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    // Cache each file on its own so one missing file (e.g. an icon) cannot
-    // abort the whole install and leave the app un-installable/offline-broken.
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.all(APP_SHELL.map((url) => cache.add(url).catch(() => null)))
-    )
-  );
-  self.skipWaiting();
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
-      )
-    )
+self.addEventListener('activate', e => {
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// HTML (navigation) requests use network-first, so a redeploy shows up the
-// very next time the app is opened online instead of being masked by an
-// old cached copy. Everything else same-origin (icons, manifest) stays
-// cache-first for fast offline loads. Cross-origin (e.g. Google Fonts)
-// stays network-first with cache fallback.
-self.addEventListener("fetch", (event) => {
-  const req = event.request;
-  if (req.method !== "GET") return;
-
-  const url = new URL(req.url);
-  const isSameOrigin = url.origin === self.location.origin;
-  const isNavigation = req.mode === "navigate" || (req.headers.get("accept") || "").includes("text/html");
-
-  if (isSameOrigin && isNavigation) {
-    event.respondWith(
-      fetch(req).then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+// Cache-first, refresh in the background; fall back to the app shell when offline.
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  e.respondWith(
+    caches.match(e.request).then(hit => {
+      const net = fetch(e.request).then(res => {
+        if (res.ok && new URL(e.request.url).origin === location.origin)
+          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
         return res;
-      }).catch(() => caches.match(req).then((cached) => cached || caches.match("./index.html")))
-    );
-  } else if (isSameOrigin) {
-    event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        }).catch(() => caches.match("./index.html"));
-      })
-    );
-  } else {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        })
-        .catch(() => caches.match(req))
-    );
-  }
+      }).catch(() => hit || caches.match('./index.html'));
+      return hit || net;
+    })
+  );
 });
